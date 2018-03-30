@@ -38,7 +38,7 @@ done
 printf -v sep '#%.0s' {1..80} #Set sep to 80 # chars
 #eval printf -v "'#%.0s'" {1..${COLUMNS:-80}}
 linuxs="-e ubuntu -e redhat -e 'red hat' -e centos -e sles"
-distro=$(cat /etc/*release |& grep -m1 -i -o "$linuxs") || distro=centos
+distro=$(cat /etc/*release |& eval grep -m1 -i -o "$linuxs") || distro=centos
 distro=${distro,,} #make lowercase
 #distro=$(lsb_release -is | tr [[:upper:]] [[:lower:]])
 
