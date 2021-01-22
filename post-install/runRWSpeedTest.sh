@@ -14,6 +14,7 @@ Usage: $0 [-n] [-r] [-p] [-d] [-s] [-x <int>]
 -d option for script debug
 -s option to run a set of fixed size tests
 -x option for file size divider
+-X option for file size multiplier
 -p option to preserve local volume [default is to delete it]
 -r option to use regular 3x replication volume
 -n option to skip compression on tests
@@ -22,38 +23,49 @@ EOF
 
 }
 
-dbug=false; fact=1; sizes=false; preserve=false; volume=local; compression=true
-while getopts "nrpdsx:" opt; do
+dbg=false; fact=1; sizes=false; preserve=false; volume=local; compression=true
+mult=1
+while getopts "nrpdsx:X:" opt; do
    case $opt in
       n) compression=false ;;
       r) volume=regular ;;
       p) preserve=true ;;
       d) dbg=true ;;
       s) sizes=true ;;
-      x) [[ "$OPTARG" =~ ^[0-9.]+$ ]] && fact=$OPTARG || { echo $OPTARG is not an number; usage; exit 1; } ;;
+      x) [[ "$OPTARG" =~ ^[0-9]+$ ]] && fact=$OPTARG || { echo $OPTARG is not an integer; usage; exit 1; } ;;
+      X) [[ "$OPTARG" =~ ^[0-9]+$ ]] && mult=$OPTARG || { echo $OPTARG is not an integer; usage; exit 1; } ;;
       :) echo "Option -$OPTARG requires an argument." >&2; usage; exit 2 ;;
       *) usage; exit 3 ;;
    esac
 done
-[ $(id -un) != mapr -a $(id -u) -ne 0 ] && { echo This script must be run as root or mapr; exit 1; }
 
+mapracct=$(stat -c "%U" /opt/mapr/conf/)
 tmpfile=$(mktemp); trap "rm $tmpfile; echo EXIT sigspec: $?; exit" EXIT
 localvol=localvol-$(hostname -s)
 MAPR_HOME=${MAPR_HOME:-/opt/mapr}
+if [[ $(id -un) != $mapracct && $(id -u) -ne 0 ]]; then
+   echo This script must be run as root or mapr; exit 1
+fi
+
+#Check if folder exists and clear it out
+if hadoop fs -stat /$localvol >& /dev/null; then
+   hadoop fs -rm -r -skipTrash /$localvol/\*
+fi
+#TBD: ! maprcli volume info -name $localvol > /dev/null #vol exists?
 
 if [[ $volume == "regular" ]]; then
-   localvol=mfs-benchmarks-$(hostname -s)
    # Make regular volume configured with replication 3 and compression off
-   maprcli volume create -name $localvol -path /$localvol -replication 3 -topology /data/default-rack
-   hadoop fs -rm -r /$localvol/\* >/dev/null
-   hadoop mfs -setcompression off /$localvol
-elif ! maprcli volume info -name $localvol > /dev/null; then # If volume doesn't exist already
-   hadoop fs -stat /$localvol #Check if folder exists
-   # Make local volume configured with replication 1 and compression off
-   maprcli volume create -name $localvol -path /$localvol -replication 1 -localvolumehost $(<$MAPR_HOME/hostname)
-   hadoop mfs -setcompression off /$localvol
+   regvol=mfs-benchmarks-$(hostname -s)
+   opts="-name $regvol -path /$regvol -replication 3"
+   opts+=" -topology /data/default-rack"
+   maprcli volume create $opts
+   hadoop fs -rm -r -skipTrash /$regvol/\* >/dev/null
+   hadoop mfs -setcompression off /$regvol
 else
-   hadoop fs -rm -r /$localvol/\*
+   # Make local volume configured with replication 1 and compression off
+   opts="-name $localvol -path /$localvol -replication 1 "
+   opts+=" -localvolumehost $(<$MAPR_HOME/hostname)"
+   maprcli volume create $opts
    hadoop mfs -setcompression off /$localvol
 fi
 
@@ -61,7 +73,9 @@ fi
 MFS_TEST_JAR=$(find $MAPR_HOME/lib -name maprfs-diagnostic-tools-\*.jar)
 
 #set number of Java processes to the number of data drives
-ndisk=$(/opt/mapr/server/mrconfig sp list -v | grep -o '/dev/[^ ,]*' | sort -u | wc -l)
+pcmd="grep -o '/dev/[^ ,]*' | sort -u | wc -l"
+ndisk=$(/opt/mapr/server/mrconfig sp list -v | eval "$pcmd")
+#ndisk=$(/opt/mapr/server/mrconfig sp list -v | "$pcmd")
 #(( ndisk=ndisk*2 )) #Modify the process count if need be
 echo ndisk: $ndisk
 echo
@@ -69,23 +83,36 @@ echo
 # Show the Storage Pools on this node
 /opt/mapr/server/mrconfig sp list -v
 echo
+# Show multimfs status
+maprcli config load -json |grep multimfs
+netstat -plnt |grep :566
+echo
 
 # Find the available MapR storage space on this node
 fsize=$(/opt/mapr/server/mrconfig sp list | awk '/totalfree/{print $9}')
 #echo Total File space $fsize MB
 
-# Use 1% of available space
+# Start with 1% of available space
 (( fsize=(fsize/100) )) 
-# Divide by the number of processes that wil be run to set the file size
-(( fsize=(fsize/(${fact:-1}*ndisk) ) )) # TBD: Check if big enough to exceed MFS cache
+# Divide by the number of processes that will be run to set the file size
+(( fsize=(fsize/(${fact:-1}*ndisk) ) ))
+[[ $mult -gt 1 ]] && (( fsize=(fsize*mult) ))
+mfscache=$(pgrep -a mfs |grep -o -- '-m [0-9]*' |grep -o '[0-9]*')
 echo Num processes: $ndisk
 echo File size set to $fsize MB; echo
+if [[ $mfscache -gt $((ndisk * fsize)) ]]; then
+   echo MFS cache exceeds aggregate file size
+   echo mfscache: $mfscache
+   echo data size: $((ndisk * fsize))
+   exit
+fi
 #read -p "Press enter to continue or ctrl-c to abort"
 
 # Usage: RWSpeedTest filename [-]megabytes uri
 # A simple single core (1 process) test to verify node if needed
-if [ -n "$dbg" ]; then
-   hadoop jar $MFS_TEST_JAR com.mapr.fs.RWSpeedTest /$localvol/RWTestSingleTest $fsize maprfs:///
+if [[ "$dbg" == "true" ]]; then
+   opts="/$localvol/RWTestSingleTest $fsize maprfs:///"
+   eval hadoop jar $MFS_TEST_JAR com.mapr.fs.RWSpeedTest "$opts"
    exit
 fi
 
@@ -109,7 +136,7 @@ sleep 3
 awk '/Read rate:/{mbs+=$3};END{print "Aggregate Read Rate for this node is:", mbs, "MB/sec";}' $tmpfile
 
 if [[ $compression == "true" ]]; then
-   hadoop fs -rm -r /$localvol/\*
+   hadoop fs -rm -r -skipTrash /$localvol/\*
    hadoop mfs -setcompression on /$localvol
    echo
 

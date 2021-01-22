@@ -1,14 +1,15 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # jbenninghoff 2013-Oct-06  vi: set ai et sw=3 tabstop=3:
-#set -o nounset
-#set -o errexit
+# shellcheck disable=SC2162,SC2086,SC2046,SC2016
+#set -o nounset errexit
 
 usage() {
 cat << EOF
-Usage: $0 -g -d -l
+Usage: $0 -g -d -l -s <mapr-service-acct-name>
 -g To specify clush group other than "all"
 -d To enable debug output
 -l To specify clush/ssh user other than $USER
+-s To specify a service account name other than "mapr"
 
 This script is a sequence of parallel shell commands probing for
 current system configuration and highlighting differences between
@@ -24,11 +25,12 @@ EOF
 
 # Handle script options
 DBG=""; group=all; cluser=""
-while getopts "dl:g:" opt; do
+while getopts "dl:g:s:" opt; do
   case $opt in
     d) DBG=true ;;
     g) group=$OPTARG ;;
     l) cluser="-l $OPTARG" ;;
+    s) srvid="$OPTARG" ;;
     \?) usage; exit ;;
   esac
 done
@@ -38,29 +40,41 @@ done
 printf -v sep '#%.0s' {1..80} #Set sep to 80 # chars
 #eval printf -v "'#%.0s'" {1..${COLUMNS:-80}}
 linuxs="-e ubuntu -e redhat -e 'red hat' -e centos -e sles"
-distro=$(cat /etc/*release |& eval grep -m1 -i -o "$linuxs") || distro=centos
+if [[ -f /etc/*release ]]; then
+   distro=$(cat /etc/*release |& grep -m1 -i -o "$linuxs") || distro=centos
+else
+   distro=centos
+fi
 distro=${distro,,} #make lowercase
+[[ "$(uname -s)" == "Darwin" ]] && alias sed=gsed
 #distro=$(lsb_release -is | tr [[:upper:]] [[:lower:]])
+#Turn the BOKS chatter down
+export BOKS_SUDO_NO_WARNINGS=1
 
 # Check for clush and provide alt if not found
 if type clush >& /dev/null; then
    [ $(nodeset -c @${group:-all}) -gt 0 ] || { echo group: ${group:-all} does not exist; exit 2; }
    #clush specific arguments
-   parg="${cluser} -q -b -g ${group:-all}"
+   parg="${cluser} -b -g ${group:-all}"
    parg1="-S"
    parg2="-B"
    parg3="-u 30"
-   parg4="-qNS -g ${group:-all}"
+   parg4="-qNS -g ${group:-all} ${cluser} "
    node=$(nodeset -I0 -e @${group:-all})
    narg="-w $node -o -qtt"
    sshcnf=$HOME/.ssh/config
    [[ ! -f $sshcnf ]] && { touch $sshcnf; chmod 600 $sshcnf; }
-   e1='/^StrictHostKeyChecking/{s/.*/StrictHostKeyChecking no/;:z;n;bz}'
-   e2='$aStrictHostKeyChecking no\nLogLevel ERROR'
-   sed -i.bak -e "$e1" -e "$e2" $sshcnf
-   if ! diff $sshcnf $sshcnf.bak >/dev/null; then
-      echo To suppress ssh noise, $sshcnf has been modified
+   if ! grep -q StrictHostKeyChecking $sshcnf ; then
+      echo To suppress ssh noise, add the following to $sshcnf
+      echo StrictHostKeyChecking no
+      echo LogLevel ERROR
    fi
+   #e1='/^StrictHostKeyChecking/{s/.*/StrictHostKeyChecking no/;:z;n;bz}'
+   #e2='$aStrictHostKeyChecking no\nLogLevel ERROR'
+   #sed -i.bak -e "$e1" -e "$e2" $sshcnf
+   #if ! diff $sshcnf $sshcnf.bak >/dev/null; then
+   #   echo To suppress ssh noise, $sshcnf has been modified
+   #fi
    # Common arguments to pass in to clush execution
    #clcnt=$(nodeset -c @all)
    #parg="$parg -f $clcnt" #fanout set to cluster node count
@@ -70,14 +84,18 @@ else
    clush() { eval "$@"; } #clush becomes no-op, all commands run locally doing a single node inspection
    #clush() { for h in $(<~/host.list); do; ssh $h $@; done; } #ssh in for loop
 fi
-[ -n "$DBG" ] && { clush $parg $parg1 ${parg3/0 /} date || { echo clush failed; usage; exit 3; }; }
+if [[ -n "$DBG" ]]; then
+   clush $parg $parg1 ${parg3/0 /} date || { echo clush failed; usage; exit 3; }
+fi
 
 # Locate or guess MapR Service Account
 if [[ -f /opt/mapr/conf/daemon.conf ]]; then
+   echo "Using mapr.daemon.user from /opt/mapr/conf/daemon.conf"; sleep 3
    srvid=$(awk -F= '/mapr.daemon.user/ {print $2}' /opt/mapr/conf/daemon.conf)
    [[ -z "$srvid" ]] && srvid=mapr #guess
 else
-   srvid=mapr #guess at service acct if not found
+   srvid=${srvid:-mapr} #guess at service acct if not found
+#TBD: add 'getent passwd |grep -i mapr' to list other service acct names
 fi
 
 # Define Sudo options if available
@@ -86,24 +104,30 @@ if [[ $(id -u) -ne 0 && "$cluser" != "-l root" ]]; then
       read -s -e -p 'Enter sudo password: ' mypasswd
       #echo $mypasswd | sudo -S -i dmidecode -t bios || exit
       SUDO="echo $mypasswd | sudo -S -i "
+      # sudo -ln can say pw required when it isn't required
    else
       SUDO='sudo PATH=/sbin:/usr/sbin:$PATH '
    fi
-   if (clush $narg $parg1 "${SUDO:-} grep -q '^Defaults.*requiretty' /etc/sudoers" >& /dev/null); then
+   gs="'^Defaults.*requiretty'"
+   if (clush $narg $parg1 "${SUDO:-} grep -q $gs /etc/sudoers" >&/dev/null);then
       parg="-o -qtt $parg" # Add -qtt for sudo tty via ssh/clush
-      #echo Use: clush -ab -o -qtt "sudo sed -i.bak '/^Defaults.*requiretty/s/^/#/' /etc/sudoers"  To run sudo without a tty
+      #echo Use: clush -ab -o -qtt "sudo sed -i.bak
+      #'/^Defaults.*requiretty/s/^/#/' /etc/sudoers"
+      #To run sudo without a tty
    fi
 fi
 
 # Check for systemd and basic RPMs
-sysd=$(clush $parg4 "[ -f /etc/systemd/system.conf ]" && echo true || echo false )
+clcmd="[ -f /etc/systemd/system.conf ]"
+sysd=$(clush $parg4 "$clcmd" && echo true || echo false)
 rpms="pciutils dmidecode net-tools ethtool "
 case $distro in
    redhat|centos|red*|sles)
    rpms+="bind-utils "
    if ! clush $parg $parg1 "rpm -q $rpms >/dev/null"; then
       echo Essential RPMs required for audit not installed!
-      echo "Install packages on all nodes with clush: clush -ab 'yum -y install $rpms'"
+      echo "Install packages on all nodes with clush:"
+      echo "clush -ab 'yum -y install $rpms'"
       exit
    fi
    ;;
@@ -111,7 +135,8 @@ case $distro in
    rpms+="bind9utils "
    if ! clush $parg $parg1 "dpkg -l $rpms >/dev/null"; then
       echo Essential packages required for audit not installed!
-      echo "Install packages on all nodes with clush: clush -ab 'apt-get -y install $rpms'"
+      echo "Install packages on all nodes with clush:"
+      echo "clush -ab 'apt-get -y install $rpms'"
       exit
    fi
    ;;
@@ -124,7 +149,7 @@ esac
 echo;echo "#################### Hardware audits ###############################"
 date; echo $sep
 echo NodeSet: $(nodeset -e @${group:-all}); echo $sep
-echo All the groups currently defined for clush:; echo $(nodeset -l)
+echo All the groups currently defined for clush:; nodeset -l
 echo groups zk, cldb, rm, and hist needed for clush based install; echo $sep
 # probe for system info ###############
 clush $parg "echo DMI Sys Info:; ${SUDO:-} dmidecode | grep -A2 '^System Information'"; echo $sep
@@ -132,8 +157,10 @@ clush $parg "echo DMI BIOS:; ${SUDO:-} dmidecode |grep -A3 '^BIOS I'"; echo $sep
 
 # probe for cpu info ###############
 clush $parg "grep '^model name' /proc/cpuinfo | sort -u"; echo $sep
-clush $parg "lscpu | grep -v -e op-mode -e ^Vendor -e family -e Model: -e Stepping: -e BogoMIPS -e Virtual -e ^Byte -e '^NUMA node(s)' | awk '/^CPU MHz:/{sub(\$3,sprintf(\"%0.0f\",\$3))};{print}'"; echo $sep
-clush $parg "lscpu | grep -e ^Thread"; echo $sep
+clush $parg "lscpu | grep -v -e op-mode -e ^Vendor -e family -e Model: -e Stepping: -e BogoMIPS -e Virtual -e ^Byte -e '^NUMA node(s)' -e '^CPU MHz:' -e ^Flags -e cache: "
+echo $sep
+#clush $parg "lscpu | grep -v -e op-mode -e ^Vendor -e family -e Model: -e Stepping: -e BogoMIPS -e Virtual -e ^Byte -e '^NUMA node(s)' | awk '/^CPU MHz:/{sub(\$3,sprintf(\"%0.0f\",\$3))};{print}'"; echo $sep
+#clush $parg "lscpu | grep -e ^Thread"; echo $sep
 #TBD: grep '^model name' /proc/cpuinfo | sed 's/.*CPU[ ]*\(.*\)[ ]*@.*/\1/'
 #TBD: curl -s -L 'http://ark.intel.com/search?q=E5-2420%20v2' | grep -A2 -e 'Memory Channels' -e 'Max Memory Bandwidth'
 
@@ -147,7 +174,7 @@ clush $parg "echo DIMM Details; ${SUDO:-} dmidecode -t memory | awk '/Memory Dev
 #clush $parg "ifconfig | grep -o ^eth.| xargs -l ${SUDO:-} /usr/sbin/ethtool | grep -e ^Settings -e Speed -e detected" 
 #clush $parg "ifconfig | awk '/^[^ ]/ && \$1 !~ /lo/{print \$1}' | xargs -l ${SUDO:-} /usr/sbin/ethtool | grep -e ^Settings -e Speed" 
 clush $parg "${SUDO:-} lspci | grep -i ether"
-clush $parg ${SUDO:-} "ip link show |sed '/ lo: /,+1d; /@.*:/,+1d' |awk '/UP/{sub(\":\",\"\",\$2);print \$2}' |xargs -l /sbin/ethtool |grep -e ^Settings -e Speed -e Link"
+clush $parg ${SUDO:-} "ip link show |sed '/ lo: /,+1d; /@.*:/,+1d' |awk '/UP/{sub(\":\",\"\",\$2);print \$2}' |sort |xargs -l /sbin/ethtool |grep -e ^Settings -e Speed -e Link"
 #Above filters out lo and vnics using @interface labels
 #TBD: fix SUDO to find ethtool, not /sbin/ethtool
 #clush $parg "echo -n 'Nic Speed: '; /sbin/ip link show | sed '/ lo: /,+1d' | awk '/UP/{sub(\":\",\"\",\$2);print \$2}' | xargs -l -I % cat /sys/class/net/%/speed"
@@ -169,6 +196,8 @@ case $distro in
    ;;
    *) echo Unknown Linux distro! $distro; exit ;;
 esac
+#TBD: add smartctl disk detail probes
+# smartctl -d megaraid,0 -a /dev/sdf | grep -e ^Vendor -e ^Product -e Capacity -e ^Rotation -e ^Form -e ^Transport
 clush $parg "echo 'Udev rules: '; ${SUDO:-} ls /etc/udev/rules.d"; echo $sep
 #clush $parg "echo 'Storage Drive(s): '; fdisk -l 2>/dev/null | grep '^Disk /dev/.*: ' | sort | grep mapper"
 #clush $parg "echo 'Storage Drive(s): '; fdisk -l 2>/dev/null | grep '^Disk /dev/.*: ' | sort | grep -v mapper"
@@ -180,6 +209,17 @@ clush $parg "[ -f /etc/system-release ] && cat /etc/system-release || cat /etc/o
 #clush $parg "uname -a | fmt"; echo $sep
 clush $parg "uname -srvmo | fmt"; echo $sep
 clush $parg "echo Time Sync Check: ; date"; echo $sep
+
+echo Hostname IP addresses
+if [[ "$distro" != "sles" ]]; then
+   clush ${parg/-b /} 'hostname -I'; echo $sep
+else
+   clush ${parg/-b /} 'hostname -i'; echo $sep
+fi
+echo DNS lookup
+clush ${parg/-b /} 'host $(hostname -f)'; echo $sep
+echo Reverse DNS lookup
+clush ${parg/-b /} 'host $(hostname -i)'; echo $sep
 
 case $distro in
    ubuntu)
@@ -195,12 +235,10 @@ case $distro in
    redhat|centos|red*|sles)
       if [[ "$distro" == "sles" ]]; then
          clush $parg 'echo "MapR Repos Check "; zypper repos | grep -i mapr && zypper -q info mapr-core mapr-spark mapr-patch';echo $sep
-         #clush $parg 'echo "MapR Repos Check "; grep -li mapr /etc/zypp/repos.d/* |xargs -l grep -Hi baseurl && zypper -q info mapr-core mapr-spark mapr-patch';echo $sep
          clush $parg "echo -n 'SElinux status: '; rpm -q selinux-tools selinux-policy" ; echo $sep
          clush $parg "${SUDO:-} service SuSEfirewall2_init status"; echo $sep
       else
-         clush $parg 'echo "MapR Repos Check "; yum --noplugins repolist | grep -i mapr && yum -q info mapr-core mapr-spark mapr-patch';echo $sep
-         #clush $parg 'echo "MapR Repos Check "; grep -li mapr /etc/yum.repos.d/* |xargs -l grep -Hi baseurl && yum -q info mapr-core mapr-spark mapr-patch';echo $sep
+         clush $parg $parg1 'echo "MapR Repos Check "; yum --noplugins repolist | grep -i mapr && yum -q info mapr-core mapr-spark mapr-patch';echo $sep
          clush $parg "echo -n 'SElinux status: '; grep ^SELINUX= /etc/selinux/config; ${SUDO:-} getenforce" ; echo $sep
       fi
       clush $parg 'echo "NFS packages installed "; rpm -qa | grep -i nfs |sort'
@@ -260,10 +298,17 @@ case $sysd in
 esac
 echo Check for nosuid and noexec mounts
 clush $parg $parg3 "mount | grep -e noexec -e nosuid | grep -v tmpfs |grep -v 'type cgroup'"; echo $sep
+#clush $parg $parg3 "mount | grep -e noexec -e nosuid | grep -v tmpfs |grep -v 'type cgroup'" |cut -d' ' -f3- |column -t; echo $sep
 echo Check for /tmp permission 
 clush $parg "stat -c %a /tmp | grep 1777 || echo /tmp permissions not 1777" ; echo $sep
-echo Check for tmpwatch on NM local dir
-clush $parg $parg2 "grep -H /tmp/hadoop-mapr/nm-local-dir /etc/cron.daily/tmpwatch || echo Not in tmpwatch: /tmp/hadoop-mapr/nm-local-dir"; echo $sep
+case $sysd in
+   true)
+      ;;
+   false)
+      echo Check for tmpwatch on NM local dir
+      clush $parg $parg2 "grep -H /tmp/hadoop-mapr/nm-local-dir /etc/cron.daily/tmpwatch || echo Not in tmpwatch: /tmp/hadoop-mapr/nm-local-dir"; echo $sep
+      ;;
+esac
 #FIX: clush -l root -ab "echo '/usr/sbin/tmpwatch \"\$flags\" -x /tmp/hadoop-mapr/nm-local-dir' >> /etc/cron.daily/tmpwatch" 
 #TBD: systemd-tmpfiles 'tmpfiles.d' man page.  Configuration 
 #in /usr/lib/tmpfiles.d/tmp.conf, and in /etc/tmpfiles.d/*.conf.
@@ -277,20 +322,11 @@ else
 fi
 clush $parg $parg2 'javadir=$(dirname $(readlink -f /usr/bin/java)); test -x $javadir/jps || { test -x $javadir/../../bin/jps || echo JDK not installed; }'
 echo $sep
-echo Hostname IP addresses
-if [[ "$distro" != "sles" ]]; then
-   clush ${parg/-b /} 'hostname -I'; echo $sep
-else
-   clush ${parg/-b /} 'hostname -i'; echo $sep
-fi
-echo DNS lookup
-clush ${parg/-b /} 'host $(hostname -f)'; echo $sep
-echo Reverse DNS lookup
-clush ${parg/-b /} 'host $(hostname -i)'; echo $sep
 echo Check for root ownership of /opt/mapr  
 clush $parg $parg2 'stat --printf="%U:%G %A %n\n" $(readlink -f /opt/mapr)'; echo $sep
 echo "Check for $srvid login"
 clush $parg $parg1 "echo '$srvid account for MapR Hadoop '; getent passwd $srvid" || { echo "$srvid user NOT found!"; exit 2; }
+#TBD: add 'getent passwd |grep -i mapr' to search for other service acct names
 echo $sep
 
 if [[ $(id -u) -eq 0 || "$parg" =~ root || "$SUDO" =~ sudo ]]; then
@@ -310,12 +346,12 @@ elif [[ $(id -un) == $srvid ]]; then
    echo Check for $srvid users java exec permission and version
    clush $parg $parg2 "echo -n 'Java version: '; java -version"; echo $sep
    echo "Check for $srvid passwordless ssh (only for MapR v3.x)"
-   clush $parg "ls ~$srvid/.ssh/authorized_keys\*"; echo $sep
+   clush $parg "ls ~$srvid/.ssh/authorized_keys*"; echo $sep
 else
    echo Must have root access or sudo rights to check $srvid limits
 fi
 echo Check for system wide nproc and nofile limits
-clush $parg "${SUDO:-} [[ -d /etc/security/limits.d ]] && { grep -e nproc -e nofile /etc/security/limits.d/*.conf |grep -v ':#'; } || exit 0"
+clush $parg "${SUDO:-} test -d /etc/security/limits.d && { grep -e nproc -e nofile /etc/security/limits.d/*.conf |grep -v ':#'; } || exit 0"
 clush $parg "${SUDO:-} grep -e nproc -e nofile /etc/security/limits.conf |grep -v ':#' "; echo $sep
 #echo 'Check for root user login and passwordless ssh (not needed for MapR, just easy for clush)'
 #clush $parg "echo 'Root login '; getent passwd root && { ${SUDO:-} echo ~root/.ssh; ${SUDO:-} ls ~root/.ssh; }"; echo $sep
