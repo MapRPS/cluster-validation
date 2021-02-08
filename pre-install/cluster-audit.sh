@@ -1,4 +1,4 @@
-#with_items!/usr/bin/env bash
+#!/usr/bin/env bash
 # jbenninghoff 2013-Oct-06  vi: set ai et sw=3 tabstop=3:
 # edwbuck 01FEB2021 <edwbuck@gmail.com>
 # shellcheck disable=SC2162,SC2086,SC2046,SC2016
