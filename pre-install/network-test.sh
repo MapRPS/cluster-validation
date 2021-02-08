@@ -19,10 +19,8 @@ Use -x <integer> option to run multiple flows/streams from each
 Use -X option to run 2 processes on servers and clients to measure
     bonding/teaming NICs
 Use -z <integer> option to specify size of test in MB (default=5000)
-Use -r option to specify reverse sort order of IP addresses, good
-    test of any firewall blockage
-Use -R option to specify random sort order of IP addresses, good
-    test of any firewall blockage
+Use -r to specify reverse sort order of the target IP addresses
+Use -R to specify random sort order of IP addresses
 Use -g <group name> option to specify a clush group (default is group all)
 Use -m option to run tests on multiple server NIC IP addresses
 Use -d option to enable debug output
@@ -31,8 +29,14 @@ EOF
 exit
 }
 
-concurrent=true; runiperf=true; multinic=false; size=5000; sortopt=''
-DBG=''; xtra=1; group=all; procs=1
+concurrent=true
+runiperf=true
+multinic=false
+size=5000
+DBG=''
+xtra=1
+group=all
+procs=1
 while getopts "XdscmrRg:z:x:" opt; do
    msg="$OPTARG is not an integer"
    case $opt in
@@ -43,8 +47,8 @@ while getopts "XdscmrRg:z:x:" opt; do
       x) [[ "$OPTARG" =~ ^[0-9]+$ ]] && xtra=$OPTARG || { echo $msg; usage; };;
       X) procs=2 ;;
       m) multinic=true ;;
-      r) sortopt="-$opt" ;; #Reverse order
-      R) sortopt="-$opt" ;; #Random order
+      r) ORDER=reverse ;;
+      R) ORDER=random ;;
       z) [[ "$OPTARG" =~ ^[0-9]+$ ]] && size=$OPTARG || { echo $msg; usage; };;
       \?) usage >&2; exit ;;
    esac
@@ -71,13 +75,12 @@ setvars() {
    fi
 }
 setvars
-
 if [[ -n "$DBG" ]]; then
    echo concurrent: $concurrent
    echo runiperf: $runiperf
    echo multinic: $multinic
    echo size: $size
-   echo sortopt: $sortopt
+   echo ORDER: ${ORDER}
    echo xtra: $xtra
    echo group: $group
    echo procs: $procs
@@ -115,6 +118,12 @@ if [[ $multinic == "true" ]]; then
    [[ -n "$DBG" ]] && echo multinics: "${multinics[@]}"
 fi
 
+# Sort client list
+if [[ "x${ORDER}" == "xrandom" ]]; then
+   readarray -t sortlist < <(printf '%s\n' "${iplist[@]}" | sort -R )
+   iplist=( "${sortlist[@]}" )
+   echo Randomized iplist: "${iplist[@]}"
+fi
 # Generate the 2 bash arrays with IP address values using array extraction
 len=${#iplist[@]}; ((len=len/2))
 half1=( "${iplist[@]:0:$len}" ) #extract first half of array (servers)
@@ -136,10 +145,10 @@ done
 echo
 
 # Sort client list
-if [[ -n $sortopt ]]; then
-   readarray -t sortlist < <(printf '%s\n' "${half2[@]}" | sort "$sortopt")
+if [[ "x${ORDER}" == "xreverse" ]]; then
+   readarray -t sortlist < <(printf '%s\n' "${half2[@]}" | sort -r )
    half2=( "${sortlist[@]}" )
-   echo Sorted half2: "${half2[@]}"
+   echo Reversed half2: "${half2[@]}"
 fi
 
 # Handle uneven total host count, save and strip last element
