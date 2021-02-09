@@ -45,7 +45,7 @@ export SUPPORTED_DISTROS=( rhel sles ubuntu )
 
 DISTRO_ID=$(awk 'BEGIN { FS="=" } $1=="ID" { gsub(/"/, "", $2); print $2 }' /etc/os-release)
 DISTRO_ID_LIKE=( $(awk 'BEGIN { FS="=" } $1=="ID_LIKE" { gsub(/"/, "", $2); print $2 }' /etc/os-release) )
-if [[ " ${SUPPORTED_DISTROS[@]} " == *" DISTRO_ID "* ]]
+if [[ " ${SUPPORTED_DISTROS[@]} " == *" ${DISTRO_ID} "* ]]
 then
   EFFECTIVE_DISTRO=${DISTRO_ID}
 else
