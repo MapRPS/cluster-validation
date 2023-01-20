@@ -88,10 +88,6 @@ if type clush >& /dev/null; then
    [ $(nodeset -c @${group:-all}) -gt 0 ] || { echo group: ${group:-all} does not exist; exit 2; }
    #clush specific arguments
    parg="${cluser} -b -g ${group:-all}"
-   parg1="-S"
-   parg2="-B"
-   parg3="-u 30"
-   parg4="-qNS -g ${group:-all} ${cluser} "
    node=$(nodeset -I0 -e @${group:-all})
    narg="-w $node -o -qtt"
    sshcnf=$HOME/.ssh/config
@@ -117,7 +113,7 @@ else
    #clush() { for h in $(<~/host.list); do; ssh $h $@; done; } #ssh in for loop
 fi
 if [[ -n "$DBG" ]]; then
-   clush $parg $parg1 ${parg3/0 /} date || { echo clush failed; usage; exit 3; }
+   clush "${cluser} -b -g ${group:-all}" -S -u 30 date || { echo clush failed; usage; exit 3; }
 fi
 
 # Locate or guess MapR Service Account
@@ -141,7 +137,7 @@ if [[ $(id -u) -ne 0 && "$cluser" != "-l root" ]]; then
       SUDO='sudo PATH=/sbin:/usr/sbin:$PATH '
    fi
    gs="'^Defaults.*requiretty'"
-   if (clush $narg $parg1 "${SUDO:-} grep -q $gs /etc/sudoers" >&/dev/null);then
+   if (clush $narg -S "${SUDO:-} grep -q $gs /etc/sudoers" >&/dev/null);then
       parg="-o -qtt $parg" # Add -qtt for sudo tty via ssh/clush
       #echo Use: clush -ab -o -qtt "sudo sed -i.bak
       #'/^Defaults.*requiretty/s/^/#/' /etc/sudoers"
@@ -151,28 +147,59 @@ fi
 
 # Check for systemd and basic RPMs
 clcmd="[ -f /etc/systemd/system.conf ]"
-sysd=$(clush $parg4 "$clcmd" && echo true || echo false)
-rpms="pciutils dmidecode net-tools ethtool "
-case ${EFFECTIVE_DISTRO} in
-   rhel|sles)
-   rpms+="bind-utils "
-   if ! clush $parg $parg1 "rpm -q $rpms >/dev/null"; then
-      echo Essential RPMs required for audit not installed!
-      echo "Install packages on all nodes with clush:"
-      echo "clush -ab 'yum -y install $rpms'"
-      exit
+sysd=$(clush -qNS -g ${group:-all} ${cluser} "$clcmd" && echo true || echo false)
+
+distro_match()
+{
+   for PATTERN in "$@"; do
+      if [[ "${EFFECTIVE_DISTRO}-${DISTRO_ID_VERSION}" =~ $PATTERN ]]; then
+         return 0
+      fi
+   done
+   return 1
+}
+
+verify_installed_packages() {
+   if distro_match rhel-8; then
+      if ! clush $parg -S "rpm -q $@ >/dev/null" >/dev/null 2>&1; then
+         echo "Required packages not installed, fix with:"
+         echo "  clush $parg -S \"dnf -y install $@\" "
+         return 1
+      fi
+      return 0
    fi
-   ;;
-   ubuntu)
-   rpms+="bind9utils "
-   if ! clush $parg $parg1 "dpkg -l $rpms >/dev/null"; then
-      echo Essential packages required for audit not installed!
-      echo "Install packages on all nodes with clush:"
-      echo "clush -ab 'apt-get -y install $rpms'"
-      exit
+   if distro_match rhel-7 rhel-6 sles-*; then
+      echo matched rhel something
+      if ! clush $parg -S "rpm -q $@ >/dev/null"; then
+          echo "Required packages not installed, fix with:"
+          echo "  clush $parg -S \"yum -y install $@\" "
+          return 1
+      fi
+      return 0
    fi
-   ;;
-esac
+   if distro_match ubuntu-*; then
+      echo matched ubuntu something 
+      if ! check="clush $parg -S dpkg -l $@ >/dev/null"; then
+          echo "Required packages not installed, fix with:"
+          echo "  clush $parg -S \"apt-get -y install $@\" "
+          return 1
+      fi
+      return 0
+   fi
+}
+
+# Checking tool requirements
+echo "Checking cluster-audit required tools"
+required_packages=()
+if distro_match rhel-* sles-*; then
+   required_packages+=( "pciutils" "dmidecode" "net-tools" "ethtool" "bind-utils" )
+fi
+if distro_match ubuntu-*; then
+   required_packages=( "pciutils" "dmidecode" "net-tools" "ethtool" "bind9utils" )
+fi
+if ! verify_installed_packages ${required_packages[@]}; then
+   echo Exiting in failure; exit 1
+fi
 
 [ -n "$DBG" ] && { echo sysd: $sysd; echo srvid: $srvid; echo SUDO: $SUDO; echo parg: $parg; echo node: $node; }
 [ -n "$DBG" ] && exit
@@ -187,7 +214,7 @@ echo groups zk, cldb, rm, and hist needed for clush based install; echo $sep
 clush $parg "echo DMI Sys Info:; ${SUDO:-} dmidecode | grep -A2 '^System Information'"; echo $sep
 clush $parg "echo DMI BIOS:; ${SUDO:-} dmidecode |grep -A3 '^BIOS I'"; echo $sep
 
-# probe for cpu info ###############
+# probe for cpu info ##############
 clush $parg "grep '^model name' /proc/cpuinfo | sort -u"; echo $sep
 clush $parg "lscpu | grep -v -e op-mode -e ^Vendor -e family -e Model: -e Stepping: -e BogoMIPS -e Virtual -e ^Byte -e '^NUMA node(s)' -e '^CPU MHz:' -e ^Flags -e cache: "
 echo $sep
@@ -270,7 +297,7 @@ case ${EFFECTIVE_DISTRO} in
          clush $parg "echo -n 'SElinux status: '; rpm -q selinux-tools selinux-policy" ; echo $sep
          clush $parg "${SUDO:-} service SuSEfirewall2_init status"; echo $sep
       else
-         clush $parg $parg1 'echo "MapR Repos Check "; yum --noplugins repolist | grep -i mapr && yum -q info mapr-core mapr-spark mapr-patch';echo $sep
+         clush $parg -S 'echo "MapR Repos Check "; yum --noplugins repolist | grep -i mapr && yum -q info mapr-core mapr-spark mapr-patch';echo $sep
          clush $parg "echo -n 'SElinux status: '; grep ^SELINUX= /etc/selinux/config; ${SUDO:-} getenforce" ; echo $sep
       fi
       clush $parg 'echo "NFS packages installed "; rpm -qa | grep -i nfs |sort'
@@ -324,13 +351,13 @@ clush $parg 'echo "Disk Controller Configured Transfer Size:"; files=$(ls /sys/b
 echo Check Mounted FS
 case $sysd in
    true)
-      clush $parg $parg3 "df -h --output=fstype,size,pcent,target -x tmpfs -x devtmpfs"; echo $sep ;;
+      clush $parg -u 30 "df -h --output=fstype,size,pcent,target -x tmpfs -x devtmpfs"; echo $sep ;;
    false)
-      clush $parg $parg3 "df -hT | cut -c22-28,39- | grep -e '  *' | grep -v -e /dev"; echo $sep ;;
+      clush $parg -u 30 "df -hT | cut -c22-28,39- | grep -e '  *' | grep -v -e /dev"; echo $sep ;;
 esac
 echo Check for nosuid and noexec mounts
-clush $parg $parg3 "mount | grep -e noexec -e nosuid | grep -v tmpfs |grep -v 'type cgroup'"; echo $sep
-#clush $parg $parg3 "mount | grep -e noexec -e nosuid | grep -v tmpfs |grep -v 'type cgroup'" |cut -d' ' -f3- |column -t; echo $sep
+clush $parg -u 30 "mount | grep -e noexec -e nosuid | grep -v tmpfs |grep -v 'type cgroup'"; echo $sep
+#clush $parg -u 30 "mount | grep -e noexec -e nosuid | grep -v tmpfs |grep -v 'type cgroup'" |cut -d' ' -f3- |column -t; echo $sep
 echo Check for /tmp permission 
 clush $parg "stat -c %a /tmp | grep 1777 || echo /tmp permissions not 1777" ; echo $sep
 case $sysd in
@@ -338,7 +365,7 @@ case $sysd in
       ;;
    false)
       echo Check for tmpwatch on NM local dir
-      clush $parg $parg2 "grep -H /tmp/hadoop-mapr/nm-local-dir /etc/cron.daily/tmpwatch || echo Not in tmpwatch: /tmp/hadoop-mapr/nm-local-dir"; echo $sep
+      clush $parg -B "grep -H /tmp/hadoop-mapr/nm-local-dir /etc/cron.daily/tmpwatch || echo Not in tmpwatch: /tmp/hadoop-mapr/nm-local-dir"; echo $sep
       ;;
 esac
 #FIX: clush -l root -ab "echo '/usr/sbin/tmpwatch \"\$flags\" -x /tmp/hadoop-mapr/nm-local-dir' >> /etc/cron.daily/tmpwatch" 
@@ -346,18 +373,18 @@ esac
 #in /usr/lib/tmpfiles.d/tmp.conf, and in /etc/tmpfiles.d/*.conf.
 
 echo Java Version
-clush $parg $parg2 'java -version || echo See java-post-install.sh'
+clush $parg -B 'java -version || echo See java-post-install.sh'
 if [[ "${EFFECTIVE_DISTRO}" != "sles" ]]; then
-   clush $parg $parg2 'yum list installed \*jdk\* \*java\*'
+   clush $parg -B 'yum list installed \*jdk\* \*java\*'
 else
-   clush $parg $parg2 'zypper search -i java jdk'
+   clush $parg -B 'zypper search -i java jdk'
 fi
-clush $parg $parg2 'javadir=$(dirname $(readlink -f /usr/bin/java)); test -x $javadir/jps || { test -x $javadir/../../bin/jps || echo JDK not installed; }'
+clush $parg -B 'javadir=$(dirname $(readlink -f /usr/bin/java)); test -x $javadir/jps || { test -x $javadir/../../bin/jps || echo JDK not installed; }'
 echo $sep
 echo Check for root ownership of /opt/mapr  
-clush $parg $parg2 'stat --printf="%U:%G %A %n\n" $(readlink -f /opt/mapr)'; echo $sep
+clush $parg -B 'stat --printf="%U:%G %A %n\n" $(readlink -f /opt/mapr)'; echo $sep
 echo "Check for $srvid login"
-clush $parg $parg1 "echo '$srvid account for MapR Hadoop '; getent passwd $srvid" || { echo "$srvid user NOT found!"; exit 2; }
+clush $parg -S "echo '$srvid account for MapR Hadoop '; getent passwd $srvid" || { echo "$srvid user NOT found!"; exit 2; }
 #TBD: add 'getent passwd |grep -i mapr' to search for other service acct names
 echo $sep
 
@@ -367,8 +394,8 @@ if [[ $(id -u) -eq 0 || "$parg" =~ root || "$SUDO" =~ sudo ]]; then
    clush $parg "echo -n 'Open process limit(should be >=32K): '; ${SUDO:-} su - $srvid -c 'ulimit -u'"
    clush $parg "echo -n 'Open file limit(should be >=32K): '; ${SUDO:-} su - $srvid -c 'ulimit -n'"; echo $sep
    echo Check for $srvid users java exec permission and version
-   clush $parg $parg2 "echo -n 'Java version: '; ${SUDO:-} su - $srvid -c 'java -version'"; echo $sep
-   clush $parg $parg2 "echo -n 'Locale setting(must be en_US): '; ${SUDO:-} su - $srvid -c 'locale |grep LANG'"; echo $sep
+   clush $parg -B "echo -n 'Java version: '; ${SUDO:-} su - $srvid -c 'java -version'"; echo $sep
+   clush $parg -B "echo -n 'Locale setting(must be en_US): '; ${SUDO:-} su - $srvid -c 'locale |grep LANG'"; echo $sep
    echo "Check for $srvid passwordless ssh (only for MapR v3.x)"
    clush $parg "${SUDO:-} ls ~$srvid/.ssh/authorized_keys"; echo $sep
 elif [[ $(id -un) == $srvid ]]; then
@@ -376,7 +403,7 @@ elif [[ $(id -un) == $srvid ]]; then
    clush $parg "echo -n 'Open process limit(should be >=32K): '; ulimit -u"
    clush $parg "echo -n 'Open file limit(should be >=32K): '; ulimit -n"; echo $sep
    echo Check for $srvid users java exec permission and version
-   clush $parg $parg2 "echo -n 'Java version: '; java -version"; echo $sep
+   clush $parg -B "echo -n 'Java version: '; java -version"; echo $sep
    echo "Check for $srvid passwordless ssh (only for MapR v3.x)"
    clush $parg "ls ~$srvid/.ssh/authorized_keys*"; echo $sep
 else
