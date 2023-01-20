@@ -149,38 +149,57 @@ fi
 clcmd="[ -f /etc/systemd/system.conf ]"
 sysd=$(clush -qNS -g ${group:-all} ${cluser} "$clcmd" && echo true || echo false)
 
+distro_match()
+{
+   for PATTERN in "$@"; do
+      if [[ "${EFFECTIVE_DISTRO}-${DISTRO_ID_VERSION}" =~ $PATTERN ]]; then
+         return 0
+      fi
+   done
+   return 1
+}
+
+verify_installed_packages() {
+   if distro_match rhel-8; then
+      if ! clush $parg -S "rpm -q $@ >/dev/null" >/dev/null 2>&1; then
+         echo "Required packages not installed, fix with:"
+         echo "  clush $parg -S \"dnf -y install $@\" "
+         return 1
+      fi
+      return 0
+   fi
+   if distro_match rhel-7 rhel-6 sles-*; then
+      echo matched rhel something
+      if ! clush $parg -S "rpm -q $@ >/dev/null"; then
+          echo "Required packages not installed, fix with:"
+          echo "  clush $parg -S \"yum -y install $@\" "
+          return 1
+      fi
+      return 0
+   fi
+   if distro_match ubuntu-*; then
+      echo matched ubuntu something 
+      if ! check="clush $parg -S dpkg -l $@ >/dev/null"; then
+          echo "Required packages not installed, fix with:"
+          echo "  clush $parg -S \"apt-get -y install $@\" "
+          return 1
+      fi
+      return 0
+   fi
+}
+
 # Checking tool requirements
 echo "Checking cluster-audit required tools"
-case ${EFFECTIVE_DISTRO}-${DISTRO_ID_VERSION} in
-   rhel-8)
-   rpms=( "pciutils" "dmidecode" "net-tools" "ethtool" "bind-utils" )
-   if ! clush $parg -S "rpm -q ${rpms[@]} >/dev/null"; then
-      echo Essential RPMs required for audit not installed!
-      echo "Install packages on all nodes with clush:"
-      echo "clush -ab 'dnf -y install ${rpms[@]}'"
-      exit
-   fi
-   ;;
-   rhel-*|sles-*)
-   rpms=( "pciutils" "dmidecode" "net-tools" "ethtool" "bind-utils" )
-   if ! clush $parg -S "rpm -q ${rpms[@]} >/dev/null"; then
-      echo Essential RPMs required for audit not installed!
-      echo "Install packages on all nodes with clush:"
-      echo "clush -ab 'yum -y install ${rpms[@]}'"
-      exit
-   fi
-   ;;
-   ubuntu-*)
-   rpms=( "pciutils" "dmidecode" "net-tools" "ethtool" "bind9utils" )
-   if ! clush $parg -S "dpkg -l ${rpms[@]} >/dev/null"; then
-      echo Essential packages required for audit not installed!
-      echo "Install packages on all nodes with clush:"
-      echo "clush -ab 'apt-get -y install ${rpms[@]}'"
-      exit
-   fi
-   ;;
-esac
-
+required_packages=()
+if distro_match rhel-* sles-*; then
+   required_packages+=( "pciutils" "dmidecode" "net-tools" "ethtool" "bind-utils" )
+fi
+if distro_match ubuntu-*; then
+   required_packages=( "pciutils" "dmidecode" "net-tools" "ethtool" "bind9utils" )
+fi
+if ! verify_installed_packages ${required_packages[@]}; then
+   echo Exiting in failure; exit 1
+fi
 
 [ -n "$DBG" ] && { echo sysd: $sysd; echo srvid: $srvid; echo SUDO: $SUDO; echo parg: $parg; echo node: $node; }
 [ -n "$DBG" ] && exit
