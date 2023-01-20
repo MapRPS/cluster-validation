@@ -152,27 +152,41 @@ fi
 # Check for systemd and basic RPMs
 clcmd="[ -f /etc/systemd/system.conf ]"
 sysd=$(clush $parg4 "$clcmd" && echo true || echo false)
-rpms="pciutils dmidecode net-tools ethtool "
-case ${EFFECTIVE_DISTRO} in
-   rhel|sles)
-   rpms+="bind-utils "
-   if ! clush $parg $parg1 "rpm -q $rpms >/dev/null"; then
+
+# Checking tool requirements
+echo "Checking cluster-audit required tools"
+required_rpms
+case ${EFFECTIVE_DISTRO}-${DISTRO_ID_VERSION} in
+   rhel-8)
+   rpms=( "pciutils" "dmidecode" "net-tools" "ethtool" "bind-utils" )
+   if ! clush $parg $parg1 "rpm -q ${rpms[@]} >/dev/null"; then
       echo Essential RPMs required for audit not installed!
       echo "Install packages on all nodes with clush:"
-      echo "clush -ab 'yum -y install $rpms'"
+      echo "clush -ab 'dnf -y install ${rpms[@]}'"
       exit
    fi
    ;;
-   ubuntu)
-   rpms+="bind9utils "
-   if ! clush $parg $parg1 "dpkg -l $rpms >/dev/null"; then
+   rhel-*|sles-*)
+   rpms=( "pciutils" "dmidecode" "net-tools" "ethtool" "bind-utils" )
+   if ! clush $parg $parg1 "rpm -q ${rpms[@]} >/dev/null"; then
+      echo Essential RPMs required for audit not installed!
+      echo "Install packages on all nodes with clush:"
+      echo "clush -ab 'yum -y install ${rpms[@]}'"
+      exit
+   fi
+   ;;
+   ubuntu-*)
+   rpms=( "pciutils" "dmidecode" "net-tools" "ethtool" "bind9utils" )
+   if ! clush $parg $parg1 "dpkg -l ${rpms[@]} >/dev/null"; then
       echo Essential packages required for audit not installed!
       echo "Install packages on all nodes with clush:"
-      echo "clush -ab 'apt-get -y install $rpms'"
+      echo "clush -ab 'apt-get -y install ${rpms[@]}'"
       exit
    fi
    ;;
 esac
+
+exit
 
 [ -n "$DBG" ] && { echo sysd: $sysd; echo srvid: $srvid; echo SUDO: $SUDO; echo parg: $parg; echo node: $node; }
 [ -n "$DBG" ] && exit
@@ -187,7 +201,7 @@ echo groups zk, cldb, rm, and hist needed for clush based install; echo $sep
 clush $parg "echo DMI Sys Info:; ${SUDO:-} dmidecode | grep -A2 '^System Information'"; echo $sep
 clush $parg "echo DMI BIOS:; ${SUDO:-} dmidecode |grep -A3 '^BIOS I'"; echo $sep
 
-# probe for cpu info ###############
+# probe for cpu info ##############
 clush $parg "grep '^model name' /proc/cpuinfo | sort -u"; echo $sep
 clush $parg "lscpu | grep -v -e op-mode -e ^Vendor -e family -e Model: -e Stepping: -e BogoMIPS -e Virtual -e ^Byte -e '^NUMA node(s)' -e '^CPU MHz:' -e ^Flags -e cache: "
 echo $sep
