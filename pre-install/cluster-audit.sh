@@ -245,7 +245,7 @@ clush ${parg/-b /} 'host $(hostname -i)'; echo $sep
 case ${EFFECTIVE_DISTRO} in
    ubuntu)
       # Ubuntu SElinux tools not so good.
-      clush $parg "echo 'NTP status '; ${SUDO:-} service ntpd status"; echo $sep
+      clush $parg "echo 'NTP status '; ${SUDO:-} service ntp status"; echo $sep
       clush $parg "${SUDO:-} apparmor_status | sed 's/([0-9]*)//'"; echo $sep
       clush $parg "echo -n 'SElinux status: '; ([ -d /etc/selinux -a -f /etc/selinux/config ] && grep ^SELINUX= /etc/selinux/config) || echo Disabled"
       echo $sep
