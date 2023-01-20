@@ -43,30 +43,41 @@ printf -v sep '#%.0s' {1..80} #Set sep to 80 # chars
 # Set distro information
 export SUPPORTED_DISTROS=( rhel sles ubuntu )
 
-DISTRO_ID=$(awk 'BEGIN { FS="=" } $1=="ID" { gsub(/"/, "", $2); print $2 }' /etc/os-release)
-DISTRO_ID_LIKE=( $(awk 'BEGIN { FS="=" } $1=="ID_LIKE" { gsub(/"/, "", $2); print $2 }' /etc/os-release) )
+distro_detect()
+{
+    DISTRO_ID=$(awk 'BEGIN { FS="=" } $1=="ID" { gsub(/"/, "", $2); print $2 }' /etc/os-release)
+    DISTRO_ID_LIKE=( $(awk 'BEGIN { FS="=" } $1=="ID_LIKE" { gsub(/"/, "", $2); print $2 }' /etc/os-release) )
+    DISTRO_ID_VERSION=( $(awk 'BEGIN { FS="=" } $1=="VERSION_ID" { gsub(/"/, "", $2); print $2 }' /etc/os-release) )
+    export DISTRO_ID
+    export DISTRO_ID_LIKE
+    export DISTRO_ID_VERSION
+}
+
+distro_detect
+
 if [[ " ${SUPPORTED_DISTROS[@]} " == *" ${DISTRO_ID} "* ]]
 then
   EFFECTIVE_DISTRO=${DISTRO_ID}
+  export EFFECTIVE_DISTRO
 else
   for SIMILAR_DISTRO in "${DISTRO_ID_LIKE[@]}"
   do
     if [[ " ${SUPPORTED_DISTROS[@]} " == *" $SIMILAR_DISTRO "* ]]
     then
       EFFECTIVE_DISTRO=${SIMILAR_DISTRO}
+      export EFFECTIVE_DISTRO
       break
     fi
   done
 fi
 
-echo Distro = $DISTRO_ID, effective distro = $EFFECTIVE_DISTRO
+echo Distro = $DISTRO_ID, effective distro = $EFFECTIVE_DISTRO, version = $DISTRO_ID_VERSION
+
 if [[ -z ${EFFECTIVE_DISTRO} ]]
 then
   echo "unsupported distro ${DISTRO_ID}"
   exit -1
 fi
-export DISTRO_ID
-export EFFECTIVE_DISTRO
 
 [[ "$(uname -s)" == "Darwin" ]] && alias sed=gsed
 #Turn the BOKS chatter down
