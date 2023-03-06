@@ -1,8 +1,8 @@
 Cluster Validation
 ==================
 
-Before installing MapR it is critically important to validate the
-hardware and software that MapR will be dependent on.  Doing so
+Before installing HPE Data Fabric it is critically important to validate the
+hardware and software that HPE Data Fabric will be dependent on.  Doing so
 will verify that items like disks, CPUs and NICs are performing as
 expected and the benchmark metric logged.  Doing so will also
 verify that many of the basic OS configurations and packages are
@@ -10,10 +10,10 @@ in the required state and that state is also recorded in an output
 log.
 
 Please use the steps below to test CPU/RAM, disk, and networking
-performance as well as to verify that your cluster meets MapR
+performance as well as to verify that your cluster meets HPE Data Fabric
 installation requirements. Pre-install tests should be run before
-installing MapR.  Post-install tests should be run after installing
-the MapR software and configuring it.  Post-install tests 
+installing HPE Data Fabric.  Post-install tests should be run after installing
+the HPE Data Fabric software and configuring it.  Post-install tests 
 help assure that the cluster is in good working order and ready 
 to hand over to your production team.
 
@@ -61,7 +61,7 @@ clush command simplifies this:
 Step 1 : Gather Base Audit Information
 --------------------------------------
 Run cluster-audit.sh as root to verify that all nodes have met the
-MapR installation requirements.  Run:
+HPE Data Fabric installation requirements.  Run:
 
     cd /root/cluster-validation/
     pre-install/cluster-audit.sh | tee cluster-audit.log
@@ -127,7 +127,7 @@ Step 4 : Evaluate Raw Disk Performance
 --------------------------------------
 Use the iozone benchmark to test disk performance. This process 
 is destructive to disks that are tested, so make sure that 
-you have not installed MapR nor have any needed data on those 
+you have not installed HPE Data Fabric nor have any needed data on those 
 spindles. The script as shipped will ONLY list out the disks to
 be tested. When run with no arguments, this script outputs a 
 list of unused disks.  After carefully examining this list, run 
@@ -170,7 +170,7 @@ Post Installation tests
 Post installation tests are in the post-install folder.  The primary 
 tests are RWSpeedTest and TeraSort.  Scripts to run each are 
 provided in the folder.  Read the scripts for additional info. These
-scripts should all be run by the MapR service account, typically
+scripts should all be run by the HPE Data Fabric service account, typically
 'mapr'.  The tests should be rerun as a normal user account to
 verify that normal accounts have no permission issues and can
 achieve the same throughput.
@@ -184,7 +184,7 @@ post install benchmarks.
 2: Run MFS benchmark
 --------------------------------------
 A script to run a per node MFS benchmark is the first post-install
-test to run on MapR. It is run on each cluster node using the script
+test to run on HPE Data Fabric. It is run on each cluster node using the script
 post-install/runRWSpeedTest.sh.  It should be run on all nodes using clush:
 
    clush -ab post-install/runRWSpeedTest.sh |tee MFSbenchmark.log
@@ -233,7 +233,7 @@ sizes.
 
 
 The post-install folder also contains a mapr-audit.sh script which
-can be run to provide an audit log of the MapR configuration.  The
+can be run to provide an audit log of the HPE Data Fabric configuration.  The
 script contains a useful set of example maprcli commands. There are
 also install, upgrade and un-install options to mapr-install.sh
 that leverage clush to run quickly on an entire set of nodes or
