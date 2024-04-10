@@ -1,8 +1,131 @@
 #!/usr/bin/env bash
-# jbenninghoff 2013-Oct-06  vi: set ai et sw=3 tabstop=3:
+# vi: set ai et sw=2 tabstop=3:
+# jbenninghoff 2013-Oct-06
 # edwbuck 01FEB2021 <edwbuck@gmail.com>
 # shellcheck disable=SC2162,SC2086,SC2046,SC2016
 #set -o nounset errexit
+
+SUPPORTED_DISTROS=( rhel sles ubuntu )
+
+## BEGIN - Logging support
+declare -i LOG_LEVEL=4
+
+log::set_off() {
+  LOG_LEVEL=0
+}
+
+log::set_fatal() {
+  LOG_LEVEL=1
+}
+
+log::set_error() {
+  LOG_LEVEL=2
+}
+
+log::set_warn() {
+  LOG_LEVEL=3
+}
+
+log::set_info() {
+  LOG_LEVEL=4
+}
+
+log::set_debug() {
+  LOG_LEVEL=5
+}
+
+log::set_trace() {
+  LOG_LEVEL=6
+}
+
+log::set_all() {
+  LOG_LEVEL=7
+}
+
+log::fatal() {
+  local MESSAGE=$1
+  local PARAMETERS=("${@:2}")
+  if (( LOG_LEVEL > 0 )); then
+    # shellcheck disable=SC2059
+    printf "${MESSAGE}\n" "${PARAMETERS[@]}"
+  fi
+}
+
+log::error() {
+  local MESSAGE=$1
+  local PARAMETERS=("${@:2}")
+  if (( LOG_LEVEL > 1 )); then
+    # shellcheck disable=SC2059
+    printf "${MESSAGE}\n" "${PARAMETERS[@]}"
+  fi
+}
+
+log::warn() {
+  local MESSAGE=$1
+  local PARAMETERS=("${@:2}")
+  if (( LOG_LEVEL > 2 )); then
+    # shellcheck disable=SC2059
+    printf "${MESSAGE}\n" "${PARAMETERS[@]}"
+  fi
+}
+
+log::info() {
+  local MESSAGE=$1
+  local PARAMETERS=("${@:2}")
+  if (( LOG_LEVEL > 3 )); then
+    # shellcheck disable=SC2059
+    printf "${MESSAGE}\n" "${PARAMETERS[@]}"
+  fi
+}
+
+log::debug() {
+  local MESSAGE=$1
+  local PARAMETERS=("${@:2}")
+  if (( LOG_LEVEL > 4 )); then
+    # shellcheck disable=SC2059
+    printf "${MESSAGE}\n" "${PARAMETERS[@]}"
+  fi
+}
+
+log::trace() {
+  local MESSAGE=$1
+  local PARAMETERS=("${@:2}")
+  if (( LOG_LEVEL > 5 )); then
+    # shellcheck disable=SC2059
+    printf "${MESSAGE}\n" "${PARAMETERS[@]}"
+  fi
+}
+
+log::set_info
+## END - logging support
+
+## BEGIN - Distro tools
+distro::id() {
+  local DISTRO_ID
+  DISTRO_ID=$(awk 'BEGIN { FS="=" } $1=="ID" { gsub(/"/, "", $2); print $2 }' /etc/os-release)
+  echo ${DISTRO_ID}
+}
+
+distro::id_like() {
+  local -n ID_ARRAY=$1
+  read -a ID_ARRAY <<< "$(awk 'BEGIN { FS="=" } $1=="ID_LIKE" { gsub(/"/, "", $2); print $2 }' /etc/os-release)"
+  # ID_ARRAY=( $(awk 'BEGIN { FS="=" } $1=="ID_LIKE" { gsub(/"/, "", $2); print $2 }' /etc/os-release) )
+}
+## END - Distro tools
+
+## BEGIN - array tools
+array::contains() {
+  local -n ARRAY=$1
+  local ELEMENT=$2
+
+  for VALUE in "${ARRAY[@]}"; do
+    if [[ "${VALUE}" == "${ELEMENT}" ]]; then
+      return
+    fi
+  done
+  false
+}
+## END - array tools
 
 usage() {
 cat << EOF
@@ -28,45 +151,50 @@ EOF
 DBG=""; group=all; cluser=""
 while getopts "dl:g:s:" opt; do
   case $opt in
-    d) DBG=true ;;
+    d) DBG=true; log::set_debug ;;
     g) group=$OPTARG ;;
     l) cluser="-l $OPTARG" ;;
     s) srvid="$OPTARG" ;;
     \?) usage; exit ;;
   esac
 done
-[ -n "$DBG" ] && set -x
 
 # Set some global variables
 printf -v sep '#%.0s' {1..80} #Set sep to 80 # chars
 
-# Set distro information
-export SUPPORTED_DISTROS=( rhel sles ubuntu )
+log::debug "Supported distros include (%s)" "${SUPPORTED_DISTROS[@]}"
 
-DISTRO_ID=$(awk 'BEGIN { FS="=" } $1=="ID" { gsub(/"/, "", $2); print $2 }' /etc/os-release)
-DISTRO_ID_LIKE=( $(awk 'BEGIN { FS="=" } $1=="ID_LIKE" { gsub(/"/, "", $2); print $2 }' /etc/os-release) )
-if [[ " ${SUPPORTED_DISTROS[@]} " == *" DISTRO_ID "* ]]
-then
-  EFFECTIVE_DISTRO=${DISTRO_ID}
+log::debug "Checking this distro (%s) for direct support" $(distro::id)
+if array::contains SUPPORTED_DISTROS $(distro::id); then
+  log::debug "This distro (%s) is directly supported" $(distro::id)
+  EFFECTIVE_DISTRO=$(distro::id)
 else
-  for SIMILAR_DISTRO in "${DISTRO_ID_LIKE[@]}"
-  do
-    if [[ " ${SUPPORTED_DISTROS[@]} " == *" $SIMILAR_DISTRO "* ]]
-    then
-      EFFECTIVE_DISTRO=${SIMILAR_DISTRO}
-      break
+  log::debug "This distro (%s) is not directly supported" $(distro::id)
+fi
+
+if [[ -z "${EFFECTIVE_DISTRO}" ]]; then
+  log::debug "Checking if this distro (%s) is like a supported distro" $(distro::id)
+  ID_LIKE=()
+  distro::id_like ID_LIKE
+  for LIKE_DISTRO in "${ID_LIKE[@]}"; do
+    if array::contains SUPPORTED_DISTROS "${LIKE_DISTRO}"; then
+        log::debug "This distro (%s) is indirectly supported" $(distro::id)
+        EFFECTIVE_DISTRO="${LIKE_DISTRO}"
+	break;
     fi
   done
+  log::debug "This distro (%s) is not indirectly supported" $(distro::id)
 fi
 
-echo Distro = $DISTRO_ID, effective distro = $EFFECTIVE_DISTRO
-if [[ -z ${EFFECTIVE_DISTRO} ]]
-then
-  echo "unsupported distro ${DISTRO_ID}"
-  exit -1
+if [[ -z "${EFFECTIVE_DISTRO}" ]]; then
+  log::fatal "This distro (%s) is not supported.  If you believe this to be an error,
+please submit an issue containing the /etc/os-release of your platform at
+https://github.com/MapRPS/cluster-validation/issues and/or notify Edwin Buck." $(distro::id)
+  exit 1
 fi
-export DISTRO_ID
+
 export EFFECTIVE_DISTRO
+log::info "This distro (%s) is being handled like (%s)" $(distro::id) "${EFFECTIVE_DISTRO}"
 
 [[ "$(uname -s)" == "Darwin" ]] && alias sed=gsed
 #Turn the BOKS chatter down
@@ -215,7 +343,7 @@ case ${EFFECTIVE_DISTRO} in
    rhel|sles)
    clush $parg "echo 'Block Devices: '; lsblk -id -o NAME,SIZE,TYPE,MOUNTPOINT |grep -v ^sr0 |uniq -c -f1 |sed '1s/  1/Qty/'"; echo $sep
    ;;
-   *) echo Unknown Linux distro! ${DISTRO_ID}; exit ;;
+   *) echo Unknown Linux distro! $(distro::id); exit ;;
 esac
 #TBD: add smartctl disk detail probes
 # smartctl -d megaraid,0 -a /dev/sdf | grep -e ^Vendor -e ^Product -e Capacity -e ^Rotation -e ^Form -e ^Transport
@@ -298,7 +426,7 @@ case ${EFFECTIVE_DISTRO} in
          ;;
       esac
    ;;
-   *) echo Unknown Linux distro! ${DISTRO_ID}; exit ;;
+   *) echo Unknown Linux distro! $(distro::id); exit ;;
       #clush $parg 'echo "MapR Repos Check "; zypper repos |grep -i mapr && yum -q info mapr-core mapr-spark mapr-patch';echo $sep
 esac
 
