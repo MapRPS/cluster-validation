@@ -231,6 +231,11 @@ This script needs improvement.  It currently requires cores, memory
 and executors to be modified in the script for specific cluster
 sizes.
 
+Additionally the default script uses a jar built for Scala 2.10 or 2.11
+and will fail when running on MapR 6.2 or above. The script will need to
+be updated to reference version 1.2 of the jar instead of 1.1 to work on
+newer clusters.
+
 
 The post-install folder also contains a mapr-audit.sh script which
 can be run to provide an audit log of the HPE Data Fabric configuration.  The
