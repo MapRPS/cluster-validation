@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# vi: set ai et sw=2 tabstop=3:
+# vi: set ai et sw=2 tabstop=2:
 # jbenninghoff 2013-Oct-06
 # edwbuck 01FEB2021 <edwbuck@gmail.com>
 # shellcheck disable=SC2162,SC2086,SC2046,SC2016
