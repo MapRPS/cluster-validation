@@ -36,7 +36,7 @@ def print_table(nodes):
     headers = ["Hostname", "IP", "CPUs", "DUsed", "DAvail", "DTotal"]
     widths = [30, 15, 5, 6, 7, 7]
 
-    header_row = "  ".join(h.ljust(w) for h, w in zip(headers, widths))
+    header_row = "  ".join(str(h).ljust(w) for h, w in zip(headers, widths))
     print(header_row)
     print("-" * len(header_row))
 
@@ -44,11 +44,13 @@ def print_table(nodes):
         row = [
             node.get("hostname", ""),
             node.get("ip", ""),
-            str(node.get("cpus", "")),
-            str(node.get("dused", "")),
-            str(node.get("davail", "")),
-            str(node.get("dtotal", ""))
+            node.get("cpus", ""),
+            node.get("dused", ""),
+            node.get("davail", ""),
+            node.get("dtotal", "")
         ]
+        # Ensure all values are strings to avoid 'list' object has no attribute 'ljust'
+        row = [str(val) if not isinstance(val, str) else val for val in row]
         print("  ".join(val.ljust(w) for val, w in zip(row, widths)))
 
 def print_dashboard_summary(info, license_id):
