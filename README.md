@@ -48,7 +48,7 @@ Next, download and extract the cluster-validation package with a command like th
 
 Extract with tar in /root or your home folder and rename the top level folder like this:  
 
-    mv jbenninghoff-cluster-validation-* cluster-validation
+    mv cluster-validation-* cluster-validation
     or
     mv cluster-validation-* cluster-validation
 
