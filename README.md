@@ -246,4 +246,47 @@ cluster.  Some of the scripts will not run without editing, so read the
 scripts carefully to understand how to edit them with site specific
 info.  All scripts support the -h option to show help on usage.
 
-/John Benninghoff
+ 
+# MapR Data Fabric Consumption Reporter
+ 
+This script (`hpe_df_consumption.py`) collects and exports key consumption data from an HPE Ezmeral Data Fabric cluster. It retrieves license ID, node-level CPU and disk usage, and dashboard-level statistics (CPU, memory, disk) into a structured JSON file.
+ 
+## Features
+ 
+- Retrieves license ID from `maprcli license showid`
+
+- Collects node-level disk and CPU info
+
+- Extracts dashboard metrics including:
+
+  - Version
+
+  - Disk space (total, active)
+
+  - CPU usage (total, active, utilization)
+
+  - Memory usage (total, active)
+
+  - Cluster name, ID, and number of nodes used
+
+- Exports results to `hpe_df_consumption_data.json`
+
+- Prints a human-readable summary table to the console
+
+- Includes robust error handling for invalid or missing tickets
+ 
+## Requirements
+ 
+- Python 3.x
+
+- HPE Ezmeral Data Fabric CLI tools (`maprcli`) installed and configured
+
+- A valid `maprlogin` ticket
+ 
+## Usage
+ 
+```bash
+
+python3 hpe_df_consumption.py
+
+ 
