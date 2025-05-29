@@ -49,8 +49,6 @@ Next, download and extract the cluster-validation package with a command like th
 Extract with tar in /root or your home folder and rename the top level folder like this:  
 
     mv cluster-validation-* cluster-validation
-    or
-    mv cluster-validation-* cluster-validation
 
 Copy the cluster-validation folder to all nodes in the cluster.  The
 clush command simplifies this:
