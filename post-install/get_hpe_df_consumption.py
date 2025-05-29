@@ -18,12 +18,13 @@ def get_dashboard_info():
     if not dashboard_data.get("data"):
         return {}
     dashboard = dashboard_data["data"][0]
+    cluster_info = dashboard.get("cluster", {})
 
     return {
         "cluster": {
-            "name": dashboard.get("cluster", {}).get("name", "N/A"),
-            "id": dashboard.get("cluster", {}).get("id", "N/A"),
-            "nodesUsed": dashboard.get("nodesUsed", 0)
+            "name": cluster_info.get("name", "N/A"),
+            "id": cluster_info.get("id", "N/A"),
+            "nodesUsed": cluster_info.get("nodesUsed", 0)
         },
         "version": dashboard.get("version", "unknown"),
         "disk_space": dashboard.get("utilization", {}).get("disk_space", {}),
